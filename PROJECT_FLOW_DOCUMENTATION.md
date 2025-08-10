@@ -64,10 +64,27 @@ Customer Login → Auth Service → Customer Service → JWT Generation → Fron
 2. **API Gateway** (`SecurityConfig.java`):
    - Allows unauthenticated access to `/api/auth/**`
    - No JWT validation required for login endpoints
+   
+   **Why This Security Exception is Needed:**
+   ```java
+   // The Problem: Users need JWT tokens to access protected endpoints,
+   // but they can't get JWT tokens without logging in first!
+   // Solution: Create security exceptions for authentication endpoints
+   
+   .pathMatchers(HttpMethod.POST,"/api/auth/**").permitAll()  // ← Login endpoints
+   .pathMatchers(HttpMethod.POST,"/api/customers/register").permitAll()  // ← Registration
+   .anyExchange().authenticated()  // Everything else requires JWT
+   ```
+   
+   **What This Means:**
+   - **Public Endpoints**: `/api/auth/customer/login`, `/api/auth/restaurant/login`, `/api/customers/register`
+   - **Protected Endpoints**: All other URLs require valid JWT token
+   - **Bootstrap Solution**: Solves the chicken-and-egg problem of getting initial authentication
 
 3. **Auth Service** (`AuthController.java`):
    - Receives login request at `/api/auth/customer/login`
    - Calls `AuthService.authenticateUser()`
+   - Can process without JWT because API Gateway permitted access
 
 4. **Authentication Process** (`AuthService.java`):
    ```java
@@ -437,14 +454,24 @@ eureka.instance.instance-id=${spring.application.name}:${spring.application.inst
 ### 1. "How does authentication work in your system?"
 
 **Answer**: 
-"Our system uses JWT-based stateless authentication with a centralized Auth Service. When a user logs in:
+"Our system uses JWT-based stateless authentication with a centralized Auth Service. Here's the complete flow:
 
-1. The Auth Service validates credentials against the Customer Service
-2. Upon successful validation, it generates a JWT token containing user claims (ID, email, roles)
-3. The token is signed with a secret key and has a configurable expiration
-4. Frontend stores the token in localStorage
-5. For subsequent requests, the API Gateway validates the JWT and extracts user context
-6. Internal services receive user information via headers, eliminating the need for repeated token validation"
+**Initial Authentication (Bootstrap Problem Solution):**
+1. We have a two-tier security approach where the API Gateway creates exceptions for authentication endpoints (`/api/auth/**`) that allow unauthenticated access
+2. This solves the bootstrap problem - users can call the login endpoint without a token to get their initial JWT
+3. The Auth Service validates credentials against the Customer Service via Feign client
+4. Upon successful validation, it generates a JWT token containing user claims (ID, email, roles)
+5. The token is signed with a secret key and has a configurable expiration
+
+**Subsequent Requests:**
+6. Frontend stores the token in localStorage
+7. For all other requests, the API Gateway validates the JWT and extracts user context
+8. Internal services receive user information via headers (X-Internal-User-Id, X-Internal-User-Roles)
+9. This eliminates the need for repeated token validation across microservices
+
+**Security Tiers:**
+- **Public**: Login, registration endpoints
+- **Protected**: All business functionality requires JWT authentication"
 
 ### 2. "How do you ensure data consistency across microservices?"
 
@@ -460,14 +487,31 @@ eureka.instance.instance-id=${spring.application.name}:${spring.application.inst
 ### 3. "How does your system handle security?"
 
 **Answer**:
-"Security is implemented at multiple layers:
+"Security is implemented at multiple layers with a smart bootstrap approach:
 
-1. **API Gateway**: Central entry point with JWT validation
-2. **Role-Based Access**: Users can only access resources they own
-3. **Password Security**: BCrypt encryption for all passwords
-4. **Token Security**: JWT tokens with secret-based signing and expiration
-5. **Resource Authorization**: Path-based user ID matching prevents data leakage
-6. **CORS Configuration**: Proper cross-origin request handling"
+1. **API Gateway Security**: 
+   - Central entry point with JWT validation for protected endpoints
+   - Strategic security exceptions for authentication endpoints to solve the bootstrap problem
+   - Configuration: `permitAll()` for `/api/auth/**` and registration, `authenticated()` for everything else
+
+2. **Authentication Flow**:
+   - Public endpoints allow initial token acquisition
+   - JWT tokens contain user claims and expire based on configuration
+   - Stateless authentication eliminates server-side session management
+
+3. **Authorization & Access Control**:
+   - Role-Based Access Control (RBAC) with CUSTOMER/RESTAURANT roles
+   - Resource-level authorization: Users can only access their own data
+   - Path-based user ID matching prevents data leakage
+
+4. **Data Security**:
+   - BCrypt encryption for all passwords before database storage
+   - JWT tokens signed with secret keys for integrity verification
+   - Internal service communication via trusted headers
+
+5. **Cross-Cutting Concerns**:
+   - CORS configuration for proper cross-origin request handling
+   - Request context propagation via custom headers (X-Internal-User-Id, X-Internal-User-Roles)"
 
 ### 4. "Explain the order flow from cart to delivery"
 
